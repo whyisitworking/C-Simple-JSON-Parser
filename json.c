@@ -681,6 +681,8 @@ result(json_element)
   // obj->count misses in the worst case
   for (size_t i = 0; i < obj->count; i++) {
     typed(json_entry) *entry = obj->entries[bucket];
+    if (entry == NULL)
+      break;
     if (strcmp(key, entry->key) == 0)
       return result_ok(json_element)(entry->element);
 
