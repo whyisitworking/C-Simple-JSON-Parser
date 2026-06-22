@@ -1,3 +1,6 @@
 bin
 obj
 Makefile
+
+build
+cmake

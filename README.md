@@ -1,343 +1,219 @@
-# Simple JSON Parser in C
+# C Simple JSON Parser
 
-An easy to use, very fast JSON parsing implementation written in pure C
+A tiny ANSI C JSON parser that is easy to embed: one required header, no
+mandatory dependencies, strict parsing, arena-owned memory, path lookup, and
+optional CMake targets for larger projects.
 
 ## Features
 
-- Fully [RFC-8259](https://datatracker.ietf.org/doc/html/rfc8259) compliant
-- Small 2 file library
-- Support for all data types
-- Simple and efficient hash table implementation to search element by key
-- Rust like `result` type used throughout fallible calls
-- Compile with `-DJSON_SKIP_WHITESPACE` to parse non-minified JSON with whitespace in between
-
-## Setup
-
-Copy the following from this repository in your source
-
-- `json.h`
-- `json.c`
-
-And in your code
-
-```C
-#include "json.h"
-```
-
-## MACROs
-
-### The `typed` helper
-
-A uniform type system used throughout the API
-`typed(x)` is alias for `x_t`
-
-```C
-typed(json_element) // json_element_t
-```
-
-### Rust like `result`
-
-A tagged union comprising two variants, either `ok` with the data or `err` with `typed(json_error)` with simplified API to manage variants
-
-```C
-result(json_element) // json_element_result_t
-```
-
-## API
-
-### Parse JSON:
-
-```C
-result(json_element) json_parse(typed(json_string) json_str);
-```
-
-### Find an element by key
-
-```C
-result(json_element) json_object_find(typed(json_object) * object, typed(json_string) key);
-```
-
-### Print JSON with specified indentation
-
-```C
-void json_print(typed(json_element) *element, int indent);
-```
-
-### Free JSON from memory
-
-```C
-void json_free(typed(json_element) *element);
-```
-
-### Convert error into user friendly error String
-
-```C
-typed(json_string) json_error_to_string(typed(json_error) error);
-```
-
-## Types
-
-### JSON String
-
-A null-terminated char-sequence
-
-```C
-typed(json_string) // alias for const char *
-```
-
-### JSON Number
-
-A 64-bit floating point number
-
-```C
-typed(json_number) // alias for double
-```
-
-### JSON Object
-
-An array of key-value entries
-
-```C
-typed(json_object)
-```
-
-#### Fields
-
-| **Name**  | **Type**              | **Description**       |
-| --------- | --------------------- | --------------------- |
-| `count`   | `typed(size)`         | The number of entries |
-| `entries` | `typed(json_entry) *` | The array of entries  |
-
-### JSON Array
-
-A hetergeneous array of elements
-
-```C
-typed(json_array)
-```
-
-#### Fields
-
-| **Name**   | **Type**                | **Description**        |
-| ---------- | ----------------------- | ---------------------- |
-| `count`    | `typed(size)`           | The number of elements |
-| `elements` | `typed(json_element) *` | The array of elements  |
-
-### JSON Boolean
-
-A boolean value
-
-```C
-typed(json_boolean)
-```
-
-### Element
-
-A tagged union representing a JSON value with its type
-
-```C
-typed(json_element)
-```
-
-#### Fields
-
-| **Name** | **Type**                    | **Description**       |
-| -------- | --------------------------- | --------------------- |
-| `type`   | `typed(json_element_type)`  | The type of the value |
-| `value`  | `typed(json_element_value)` | The actual value      |
-
-### Element Type
-
-An enum which represents a JSON type
-
-```C
-typed(json_element_type)
-```
-
-#### Variants
-
-| **Variant**                 | **Description** |
-| --------------------------- | --------------- |
-| `JSON_ELEMENT_TYPE_STRING`  | JSON String     |
-| `JSON_ELEMENT_TYPE_NUMBER`  | JSON Number     |
-| `JSON_ELEMENT_TYPE_OBJECT`  | JSON Object     |
-| `JSON_ELEMENT_TYPE_ARRAY`   | JSON Array      |
-| `JSON_ELEMENT_TYPE_BOOLEAN` | JSON Boolean    |
-| `JSON_ELEMENT_TYPE_NULL`    | JSON Null       |
-
-### Element Value
-
-A union for interpreting JSON data
-
-```C
-typed(json_element_value)
-```
-
-#### Fields
-
-| **Name**     | **Type**               | **Interpret data as** |
-| ------------ | ---------------------- | --------------------- |
-| `as_string`  | `typed(json_string)`   | JSON String           |
-| `as_number`  | `typed(json_number)`   | JSON Number           |
-| `as_object`  | `typed(json_object) *` | JSON Object           |
-| `as_array`   | `typed(json_array) *`  | JSON Array            |
-| `as_boolean` | `typed(json_boolean)`  | JSON Boolean          |
-
-### Error
-
-An enum which represents an error
-
-```C
-typed(json_error)
-```
-
-#### Variants
-
-| **Variant**                | **Description**                |
-| -------------------------- | ------------------------------ |
-| `JSON_ERROR_EMPTY`         | Null or empty value            |
-| `JSON_ERROR_INVALID_TYPE`  | Type inference failed          |
-| `JSON_ERROR_INVALID_KEY`   | Key is not a valid string      |
-| `JSON_ERROR_INVALID_VALUE` | Value is not a valid JSON type |
-
-## Usage
-
-### Parse with error checking
-
-```C
+- Single-header distribution through `json.h`
+- ANSI C89-compatible implementation style
+- Strict JSON parsing with error offsets
+- Valid `null`, empty strings, empty arrays, and empty objects
+- Owned UTF-8 strings with `\uXXXX` decoding and surrogate validation
+- Exact number text plus `double` and exact-fit `long` accessors
+- Arena-owned DOM released with one `json_free`
+- Object and array iteration helpers
+- Dotted/bracket path lookup such as `data[0].items[0].size.width`
+- Optional static CMake target for professional projects
+
+## Quick Start
+
+Use `json.c` if you want a conventional two-file build:
+
+```c
 #include "json.h"
 
-const char * some_json_str = "{\"hello\":\"world\",\"key\":\"value\"}";
+int main(void) {
+  json_value root;
+  json_error err;
+  json_status st;
+  long width;
 
-int main() {
-  result(json_element) element_result = json_parse(some_json_str);
-
-  // Guard if
-  if(result_is_err(json_element)(&element_result)) {
-    typed(json_error) error = result_unwrap_err(json_element)(&element_result);
-    fprintf(stderr, "Error parsing JSON: %s\n", json_error_to_string(error));
-    return -1;
+  st = json_parse("{\"data\":[{\"size\":{\"width\":42}}]}", &root, &err);
+  if (st != JSON_OK) {
+    return 1;
   }
 
-  // Extract the data
-  typed(json_element) element = result_unwrap(json_element)(&element_result);
-
-  // Fetch the "hello" key value
-  result(json_element) hello_element_result = json_object_find(element.value.as_object, "hello");
-  if(result_is_err(json_element)(&hello_element_result)) {
-    typed(json_error) error = result_unwrap_err(json_element)(&hello_element_result);
-    fprintf(stderr, "Error getting element \"hello\": %s\n", json_error_to_string(error));
-    return -1;
+  if (json_path_get_long(&root, "data[0].size.width", &width) == JSON_OK) {
+    /* width == 42 */
   }
-  typed(json_element) hello_element = result_unwrap(json_element)(&hello_element_result);
 
-  // Use the element
-  printf("\"hello\": \"%s\"\n", hello_element.value.as_string);
-  json_print(&element, 2);
-  json_free(&element);
-
+  json_free(&root);
   return 0;
 }
 ```
 
-Outputs
+Or use `json.h` as a single-header library by defining `JSON_IMPLEMENTATION`
+in exactly one translation unit:
 
-```
-"hello": "world"
-{
-  "hello": "world",
-  "key": "value"
-}
-```
-
-### Example in repository
-
-1.  Clone this repository `git clone https://github.com/forkachild/C-Simple-JSON-Parser`
-2.  Compile the example `clang example.c json.c -o example.out`
-3.  Run the binary `./example.out`
-
-## FAQs
-
-### How to know the type?
-
-At each Key-Value pair `typed(json_entry_t)`, there is a member `type`
-
-```C
+```c
+#define JSON_IMPLEMENTATION
 #include "json.h"
-
-...
-
-typed(json_element) element = ...; // See example above
-typed(json_entry) entry = element.value.as_object->entries[0];
-
-switch(entry.element.type) {
-  case JSON_TYPE_STRING:
-    // `entry.element.value.as_string` is a `json_string_t`
-    break;
-  case JSON_TYPE_NUMBER:
-    // `entry.element.value.as_number` is a `json_number_t`
-    break;
-  case JSON_TYPE_OBJECT:
-    // `entry.element.value.as_object` is a `json_object_t *`
-    break;
-  case JSON_TYPE_ARRAY:
-    // `entry.element.value.as_array` is a `json_array_t *`
-    break;
-  case JSON_TYPE_BOOLEAN:
-    // `entry.element.value.as_boolean` is a `json_boolean_t`
-    break;
-}
 ```
 
-### How to get the count of number of Key-Value pairs?
+## CMake
 
-In each `typed(json_object)`, there is a member `count`
+Header-only target:
 
-```C
-#include "json.h"
-
-...
-
-int i;
-
-typed(json_element) element = ...; // See example above
-typed(json_object) *obj = element.value.as_object;
-
-for(i = 0; i < obj->count; i++) {
-  typed(json_entry) entry = obj->entries[i];
-
-  typed(json_string) key = entry.key;
-  typed(json_element_type) type = entry.element.type;
-  typed(json_element_value) value = entry.element.value;
-  // Do something with `key`, `type` and `value`
-}
+```cmake
+add_subdirectory(C-Simple-JSON-Parser)
+target_link_libraries(app PRIVATE csjp::csjp)
 ```
 
-### How to get the number of elements in an array?
+With this mode, define `JSON_IMPLEMENTATION` in one of your source files.
 
-In each `typed(json_array)`, there is a member `count`
+Static target:
 
-```C
-#include "json.h"
-
-...
-
-int i;
-
-typed(json_element) element = ...; // See example above
-typed(json_array) *arr = element.value.as_array;
-
-for(i = 0; i < arr->count; i++) {
-  typed(json_element) element = arr->elements[i];
-
-  typed(json_element_type) type = element.type;
-  typed(json_element_value) value = element.value;
-  // Do something with `value`
-}
+```cmake
+set(CSJP_BUILD_STATIC ON)
+add_subdirectory(C-Simple-JSON-Parser)
+target_link_libraries(app PRIVATE csjp::csjp_static)
 ```
 
-### What if the JSON is poorly formatted with uneven whitespace
+The static target compiles a generated implementation translation unit for you.
+When included with `add_subdirectory`, tests and benchmarks default to off unless
+this project is the top-level build.
 
-Compile using `-DJSON_SKIP_WHITESPACE`
+Installed package:
 
-## If this helped you in any way you can [buy me a beer](https://www.paypal.me/suhelchakraborty)
+```cmake
+find_package(csjp CONFIG REQUIRED)
+target_link_libraries(app PRIVATE csjp::csjp)
+```
+
+The package also exports `csjp::csjp_static` when installed with
+`CSJP_BUILD_STATIC=ON`.
+
+## API Overview
+
+```c
+json_status json_parse(const char *text, json_value *out, json_error *err);
+json_status json_parse_len(const char *text, size_t len,
+                           const json_config *cfg, json_value *out,
+                           json_error *err);
+void json_free(json_value *value);
+const char *json_error_to_string(json_status code);
+```
+
+`json_error.offset` is a zero-based byte offset into the original input. For
+unexpected end-of-input it is the input length. For trailing input it is the
+first non-whitespace byte after the parsed value.
+
+Accessors return `JSON_WRONG_TYPE` when the value is not the requested type:
+
+```c
+json_type json_get_type(const json_value *value);
+json_status json_get_bool(const json_value *value, int *out);
+json_status json_get_string(const json_value *value, const char **data,
+                            size_t *len);
+json_status json_get_number(const json_value *value, const char **text,
+                            size_t *len, double *as_double, long *as_long,
+                            int *has_long);
+```
+
+Objects preserve insertion order. Duplicate keys are valid; iteration returns
+all members, while lookup returns the last matching key.
+
+```c
+size_t json_object_size(const json_value *object);
+const char *json_object_key(const json_value *object, size_t index,
+                            size_t *len);
+const json_value *json_object_value(const json_value *object, size_t index);
+const json_value *json_object_find(const json_value *object, const char *key);
+```
+
+Arrays are contiguous:
+
+```c
+size_t json_array_size(const json_value *array);
+const json_value *json_array_get(const json_value *array, size_t index);
+```
+
+## Path Lookup
+
+Path helpers are part of the core API:
+
+```c
+const json_value *json_path_get(const json_value *root, const char *path);
+json_status json_path_get_bool(const json_value *root, const char *path,
+                               int *out);
+json_status json_path_get_string(const json_value *root, const char *path,
+                                 const char **data, size_t *len);
+json_status json_path_get_long(const json_value *root, const char *path,
+                               long *out);
+json_status json_path_get_double(const json_value *root, const char *path,
+                                 double *out);
+```
+
+Path rules:
+
+- `.` selects object keys
+- `[0]` selects array indices
+- numeric dot segments are accepted as array shorthand
+- `data[0].items[0].size.width` and `data.0.items.0.size.width` both work
+- escape a literal dot in a key with `\\.`, for example `metadata.file\\.name`
+
+Typed path helpers return `JSON_NOT_FOUND`, `JSON_WRONG_TYPE`, or
+`JSON_INVALID_PATH` as appropriate.
+
+## Numbers
+
+JSON has one number type, so the parser keeps the exact source text. Convenience
+fields are also available:
+
+- `as_double` is parsed with the C library after grammar validation
+- `as_long` is set only when the number is an exact `long`
+- `has_long` tells whether `as_long` is valid
+
+Overflow does not make valid JSON fail to parse. It only affects convenience
+conversion fields.
+
+## Ownership
+
+The parser owns all DOM memory through an arena. Call `json_free(&root)` once on
+the top-level parsed value. Returned strings, keys, numbers, and child values are
+views into that arena and remain valid until the root is freed.
+
+`json_free(NULL)` is allowed. A zeroed `json_value` is `JSON_NULL` and safe to
+free.
+
+Custom allocators are supplied through `json_config`. Provide `malloc_fn`,
+`realloc_fn`, and `free_fn` together; partial allocator hooks are ignored so
+memory from one allocation family is never passed to another family's `realloc`
+or `free`. Path lookup uses temporary scratch buffers for escaped key segments;
+those buffers use the root value's allocator when the value came from
+`json_parse_len`.
+
+## Build And Test
+
+```sh
+cc -std=c89 -pedantic -Wall -Wextra -Werror json.c tests/test_json.c -I. -o csjp_tests
+./csjp_tests
+
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build
+```
+
+Benchmark:
+
+```sh
+./build/csjp_bench 1000
+```
+
+## Migration Notes
+
+v2 intentionally breaks the old ABI and struct layout. The old result macros,
+exact-sized hash table, whitespace compile flag, and recursive heap ownership
+model are gone.
+
+Familiar names remain where the new semantics are clean:
+
+- `json_parse`
+- `json_free`
+- `json_object_find`
+- `json_error_to_string`
+
+The main migration change is to use explicit status returns and accessors rather
+than unwrapping result macros and reading old exposed structs directly.
