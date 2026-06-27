@@ -1,3 +1,13 @@
 bin
 obj
 Makefile
+
+build/
+CMakeCache.txt
+CMakeFiles/
+CTestTestfile.cmake
+Testing/
+cmake_install.cmake
+
+.omc
+.cache

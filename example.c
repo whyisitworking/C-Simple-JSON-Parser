@@ -1,57 +1,91 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <time.h>
 
 #include "json.h"
 
-const char *read_file(const char *path) {
-  FILE *file = fopen(path, "r");
+static char *read_file(const char *path) {
+  FILE *file;
+  long len;
+  char *buffer;
+  size_t read_len;
+
+  file = fopen(path, "rb");
   if (file == NULL) {
-    fprintf(stderr, "Expected file \"%s\" not found", path);
+    fprintf(stderr, "Expected file \"%s\" not found\n", path);
     return NULL;
   }
-  fseek(file, 0, SEEK_END);
-  long len = ftell(file);
-  fseek(file, 0, SEEK_SET);
-  char *buffer = malloc(len + 1);
 
-  if (buffer == NULL) {
-    fprintf(stderr, "Unable to allocate memory for file");
+  if (fseek(file, 0, SEEK_END) != 0) {
+    fclose(file);
+    return NULL;
+  }
+  len = ftell(file);
+  if (len < 0) {
+    fclose(file);
+    return NULL;
+  }
+  if (fseek(file, 0, SEEK_SET) != 0) {
     fclose(file);
     return NULL;
   }
 
-  fread(buffer, 1, len, file);
-  buffer[len] = '\0';
+  buffer = (char *)malloc((size_t)len + 1u);
+  if (buffer == NULL) {
+    fclose(file);
+    return NULL;
+  }
 
-  return (const char *)buffer;
+  read_len = fread(buffer, 1u, (size_t)len, file);
+  fclose(file);
+  if (read_len != (size_t)len) {
+    free(buffer);
+    return NULL;
+  }
+  buffer[len] = '\0';
+  return buffer;
 }
 
 int main(void) {
-  const char *json = read_file("../sample/reddit.json");
-  if (json == NULL) {
-    return -1;
+  char *text;
+  json_root root;
+  json_error error;
+  json_status status;
+  const json_value *status_value;
+  const char *str;
+  size_t len;
+  long a;
+  int b;
+
+  text = read_file("sample/simple.json");
+  if (text == NULL) {
+    return 1;
   }
 
-  clock_t start, end;
-  start = clock();
-  result(json_element) element_result = json_parse(json);
-  end = clock();
-
-  printf("Time taken %fs\n", (double)(end - start) / (double)CLOCKS_PER_SEC);
-
-  free((void *)json);
-
-  if (result_is_err(json_element)(&element_result)) {
-    typed(json_error) error = result_unwrap_err(json_element)(&element_result);
-    fprintf(stderr, "Error parsing JSON: %s\n", json_error_to_string(error));
-    return -1;
+  status = json_parse(text, &root, &error);
+  free(text);
+  if (status != JSON_OK) {
+    fprintf(stderr, "Parse failed at byte %lu: %s\n",
+            (unsigned long)error.offset, json_error_to_string(status));
+    return 1;
   }
-  typed(json_element) element = result_unwrap(json_element)(&element_result);
 
-  // json_print(&element, 2);
-  json_free(&element);
+  status_value = json_object_get(&root.value, "status");
+  if (json_string_get(status_value, &str, &len) == JSON_OK) {
+    printf("status: %.*s\n", (int)len, str);
+  }
 
+  if (json_path_get_string(&root.value, "status", &str, &len) == JSON_OK) {
+    printf("path status: %.*s\n", (int)len, str);
+  }
+
+  if (json_path_get_long(&root.value, "data.a", &a) == JSON_OK) {
+    printf("data.a: %ld\n", a);
+  }
+
+  if (json_path_get_bool(&root.value, "data.b", &b) == JSON_OK) {
+    printf("data.b: %s\n", b ? "true" : "false");
+  }
+
+  json_free(&root);
   return 0;
 }
