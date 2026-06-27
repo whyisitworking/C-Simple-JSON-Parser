@@ -1,4 +1,4 @@
-# csjp
+# CSJP
 
 ![single-header](https://img.shields.io/badge/single--header-blue?style=flat-square)
 ![ANSI C89](https://img.shields.io/badge/ANSI-C89-orange?style=flat-square)
@@ -7,16 +7,25 @@
 ![arena DOM](https://img.shields.io/badge/memory-arena%20DOM-purple?style=flat-square)
 ![MIT](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)
 
-**One header. Strict JSON. Blazing fast.**
+`CSJP` is a single-header JSON parser for C89 — strict RFC 8259, arena-owned DOM, zero dependencies.
 
-`csjp` parses JSON into a clean, arena-owned DOM. Drop a single file into any
-C project, parse once, read with typed getters or dot-path expressions, and
-free everything with one call. No build system. No generated code. No runtime.
-No allocator drama.
+**One header. Strict. Blazing fast.**
 
 ---
 
-## 30-Second Start
+## Features
+
+- **Single header** — copy `json.h`, include it, done. Nothing to compile or link.
+- **Strict** — trailing commas, lone surrogates, overlong UTF-8, bad escapes all fail with a zero-based byte offset pointing at the exact mistake.
+- **Arena DOM** — one `json_free(&root)` releases the entire tree. No per-node cleanup, no leaks.
+- **Path expressions** — `json_path_get_long(&v, "hits[0].score", &n)` reads deeply nested values in one call.
+- **Honest numbers** — source text always preserved; `as_long`/`is_long` only set when the integer fits exactly in `long`. Overflow never fails the parse.
+- **C89 portable** — builds clean with `-std=c89 -pedantic -Wall -Wextra -Werror`. No `bool`, no VLAs, no platform guards. C99/C11 work too.
+- **Configurable** — custom allocator and depth limit via `json_config`. Validate without building a DOM by passing `NULL` for `out`.
+
+---
+
+## Quick Start
 
 ```c
 #include "json.h"
@@ -34,12 +43,11 @@ int main(void) {
     return 1;
   }
 
-  if (json_path_get_long(&root.value, "image.width", &width) != JSON_OK ||
-      json_path_get_string(&root.value, "image.label", &label, &label_len) != JSON_OK) {
-    return 1;
-  }
+  json_path_get_long(&root.value, "image.width", &width);
+  json_path_get_string(&root.value, "image.label", &label, &label_len);
 
-  printf("Label: %s\n", label);
+  printf("Label: %s, width: %ld\n", label, width);
+  /* Output: Label: hero, width: 640 */
 
   json_free(&root);   /* one call releases the whole tree */
   return 0;
@@ -50,7 +58,7 @@ Copy `json.h`. Include it. Ship it.
 
 ---
 
-## Why csjp
+## Design Goals
 
 **Strict by default.** Trailing commas, leading zeros, bad escapes, lone
 surrogates, overlong UTF-8 — all rejected, all with a zero-based byte offset
@@ -61,7 +69,7 @@ truncation.
 text, array item, and object member points into it. Nothing is heap-allocated
 separately. When you call `json_free`, it is gone — all of it, one free.
 
-**Path reads for humans.** `json_path_get_long(&root.value, "hits[0].score",
+**Easy path-based access.** `json_path_get_long(&root.value, "hits[0].score",
 &score)` reads a deeply nested integer in one call. No walking. No casting. No
 intermediate pointers to manage. If the path is wrong or the type doesn't
 match, you get a `json_status` that says exactly why.
@@ -81,7 +89,7 @@ the parse; it just means `is_long` is false. You decide what to do.
 
 Two-pass parsing allocates each array and object exactly once — no
 capacity-doubling, no stranded arena slabs. Numbers from `csjp_bench 1000` on
-a Macbook Pro M5 with 32GB of RAM:
+a MacBook Pro M5 with 32 GB of RAM:
 
 | File | Size | Throughput |
 |------|-----:|----------:|
@@ -89,31 +97,16 @@ a Macbook Pro M5 with 32GB of RAM:
 | `rickandmorty.json` | 19 KB | **267 MB/s** |
 | `food.json` | 32 KB | **163 MB/s** |
 
-These include full parse, DOM build, and `json_free`. Run them yourself:
+These include full parse, DOM build, and `json_free`.
+
+For context — csjp targets correctness and portability over raw speed. SIMD-accelerated parsers like [yyjson](https://github.com/ibireme/yyjson) reach 1–4 GB/s on the same hardware by requiring modern compilers and CPU features. csjp trades that ceiling for C89 portability, strict validation, and a simple arena API.
+
+Run the benchmarks yourself:
 
 ```sh
 cmake -S . -B build && cmake --build build
 ./build/csjp_bench 1000
 ```
-
----
-
-## Integration
-
-**Recommended:** copy `json.h` into your tree and include it.
-
-```c
-#include "json.h"
-```
-
-**CMake embed:**
-
-```cmake
-add_subdirectory(csjp)
-target_link_libraries(myapp PRIVATE csjp::csjp)
-```
-
-Tests and benchmarks are off by default when embedded.
 
 ---
 
@@ -231,6 +224,25 @@ All three allocator hooks must be set together or none at all.
 
 ---
 
+## Integration
+
+**Recommended:** copy `json.h` into your tree and include it.
+
+```c
+#include "json.h"
+```
+
+**CMake embed:**
+
+```cmake
+add_subdirectory(csjp)
+target_link_libraries(myapp PRIVATE csjp::csjp)
+```
+
+Tests and benchmarks are off by default when embedded.
+
+---
+
 ## Build and Test
 
 ```sh
@@ -251,132 +263,19 @@ ctest --test-dir build --output-on-failure
 
 ---
 
-## Migration from V2 to V3
+## Caveats
 
-V3 is a full rewrite. V2 and V3 share no API surface. The concepts map across,
-but every type name, every function call, and the build model itself changed.
+- **Arena lifetime.** Strings and number text point directly into the arena. Do not use them after calling `json_free(&root)`.
+- **Duplicate keys.** `json_object_get` returns the **last** matching key, not the first. All duplicates are preserved and accessible by index via `json_object_member_at`.
+- **Long overflow.** `json_number_get_long` returns `JSON_WRONG_TYPE` for floats and integers that overflow `long`. Use `json_number_get` with `is_long` to distinguish overflow from a type mismatch.
+- **Custom allocator.** All three hooks (`malloc_fn`, `realloc_fn`, `free_fn`) must be set together — partial configuration is not supported.
+- **Validate-only mode.** `json_parse_len(text, len, NULL, NULL, &err)` checks syntax without building a DOM. The `err` pointer must be non-NULL.
 
-### Build model
+---
 
-V2 was a two-file library. You compiled `json.c` and linked it.
+## Migrating from V2
 
-```sh
-# V2
-cc main.c json.c -I. -o app
-```
-
-V3 is a single header. There is nothing to compile separately.
-
-```sh
-# V3
-cc main.c -I. -o app
-```
-
-### Type names
-
-| V2 | V3 |
-|----|----|
-| `json_element_t` | `json_value` |
-| `json_object_t` | `json_object` (inside `json_value.as.object`) |
-| `json_array_t` | `json_array` (inside `json_value.as.array`) |
-| `json_entry_t` | `json_member` |
-| `json_number_t` | `json_number` (inside `json_value.as.number`) |
-| `json_string_t` (typedef for `const char *`) | `json_string` (struct with `.data` + `.len`) |
-| `json_boolean_t` | `int` |
-| `json_error_t` | `json_status` (enum) + `json_error` (struct with byte offset) |
-| `json_element_type_t` | `json_type` |
-
-### Parsing
-
-V2 returned a result monad that had to be unwrapped:
-
-```c
-/* V2 */
-result(json_element) res = json_parse(text);
-if (result_is_err(json_element)(&res)) {
-    json_error_t err = result_unwrap_err(json_element)(&res);
-    /* err is an enum, no byte offset */
-}
-json_element_t root = result_unwrap(json_element)(&res);
-/* must manually free later */
-```
-
-V3 writes into a caller-owned `json_root` and returns a status code:
-
-```c
-/* V3 */
-json_root root;
-json_error err;   /* includes a byte offset */
-if (json_parse(text, &root, &err) != JSON_OK) {
-    fprintf(stderr, "error at byte %lu\n", (unsigned long)err.offset);
-}
-/* root owns everything; json_free releases it all */
-```
-
-### Object lookup
-
-V2 stored object members in a hash map and looked them up with `json_object_find`:
-
-```c
-/* V2 */
-result(json_element) res = json_object_find(obj, "key");
-json_element_t val = result_unwrap(json_element)(&res);
-```
-
-V3 stores members in insertion order (iterable by index) and looks up by key
-with `json_object_get`. Duplicate keys are preserved; the last one wins on
-lookup:
-
-```c
-/* V3 */
-const json_value *val = json_object_get(&root.value, "key");
-```
-
-### Number access
-
-V2 numbers carried a type tag — a value was either a `long` or a `double`, never both:
-
-```c
-/* V2 */
-if (elem.value.as_number.type == JSON_NUMBER_TYPE_LONG)
-    long v = elem.value.as_number.value.as_long;
-else
-    double v = elem.value.as_number.value.as_double;
-```
-
-V3 always computes both. `as_double` is always valid. `as_long` is valid when
-`is_long` is true (integer that fits in `long`). Overflow is not an error:
-
-```c
-/* V3 */
-double d;
-long   l;
-int    fits;
-json_number_get(val, NULL, NULL, &d, &l, &fits);
-/* or the typed shortcuts: */
-json_number_get_double(val, &d);
-json_number_get_long(val, &l);   /* JSON_WRONG_TYPE if overflows */
-```
-
-### Memory
-
-V2 required manual element-by-element cleanup. V3 frees the entire tree in
-one call:
-
-```c
-/* V3 */
-json_free(&root);
-```
-
-### What V3 adds that V2 never had
-
-- Byte-accurate error offsets in `json_error.offset`
-- Path expressions: `json_path_get_long(&root.value, "a.b[0].c", &v)`
-- Depth limit via `json_config.max_depth`
-- Custom allocators via `json_config.allocator`
-- Validate-only mode: pass `NULL` for `out` to check syntax without a DOM
-- Preserved number source text in `json_number.text`
-- Strict RFC 8259 enforcement (surrogates, overlong UTF-8, trailing commas, etc.)
+V3 is a full rewrite with no shared API surface. See [MIGRATION.md](MIGRATION.md) for a complete mapping of type names, parsing patterns, object lookup, and number access.
 
 ---
 
