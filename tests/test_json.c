@@ -106,8 +106,8 @@ static void test_accessors_and_paths(void) {
   st = json_path_get_bool(&root, "flag", &flag);
   check(st == JSON_OK && flag == 1, "path bool");
 
-  v = json_object_find(&root, "a");
-  st = json_get_number(v, NULL, NULL, NULL, &width, &flag);
+  v = json_object_get(&root, "a");
+  st = json_number_get(v, NULL, NULL, NULL, &width, &flag);
   check(st == JSON_OK && flag == 1 && width == 2, "duplicate lookup last");
 
   check(json_path_get(&root, "data[9]") == NULL, "missing path null");

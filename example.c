@@ -53,6 +53,8 @@ int main(void) {
   const json_value *status_value;
   const char *str;
   size_t len;
+  long a;
+  int b;
 
   text = read_file("sample/simple.json");
   if (text == NULL) {
@@ -67,13 +69,21 @@ int main(void) {
     return 1;
   }
 
-  status_value = json_object_find(&root, "status");
-  if (json_get_string(status_value, &str, &len) == JSON_OK) {
+  status_value = json_object_get(&root, "status");
+  if (json_string_get(status_value, &str, &len) == JSON_OK) {
     printf("status: %.*s\n", (int)len, str);
   }
 
   if (json_path_get_string(&root, "status", &str, &len) == JSON_OK) {
     printf("path status: %.*s\n", (int)len, str);
+  }
+
+  if (json_path_get_long(&root, "data.a", &a) == JSON_OK) {
+    printf("data.a: %ld\n", a);
+  }
+
+  if (json_path_get_bool(&root, "data.b", &b) == JSON_OK) {
+    printf("data.b: %s\n", b ? "true" : "false");
   }
 
   json_free(&root);

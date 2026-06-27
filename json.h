@@ -3,10 +3,6 @@
 
 #include <stddef.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 typedef enum json_type {
   JSON_NULL = 0,
   JSON_BOOL,
@@ -51,7 +47,7 @@ typedef struct json_number {
   size_t len;
   double as_double;
   long as_long;
-  int has_long;
+  int is_long;
 } json_number;
 
 typedef struct json_value json_value;
@@ -95,50 +91,55 @@ struct json_value {
   } as;
 };
 
-json_status json_parse(const char *text, json_value *out, json_error *err);
-json_status json_parse_len(const char *text, size_t len, const json_config *cfg,
-                           json_value *out, json_error *err);
-void json_free(json_value *value);
-const char *json_error_to_string(json_status code);
-
-json_type json_get_type(const json_value *value);
-json_status json_get_bool(const json_value *value, int *out);
-json_status json_get_string(const json_value *value, const char **data,
-                            size_t *len);
-json_status json_get_number(const json_value *value, const char **text,
-                            size_t *len, double *as_double, long *as_long,
-                            int *has_long);
-
-size_t json_array_size(const json_value *array);
-const json_value *json_array_get(const json_value *array, size_t index);
-
-size_t json_object_size(const json_value *object);
-const char *json_object_key(const json_value *object, size_t index,
-                            size_t *len);
-const json_value *json_object_value(const json_value *object, size_t index);
-const json_value *json_object_find(const json_value *object, const char *key);
-const json_value *json_object_find_len(const json_value *object,
-                                       const char *key, size_t len);
-
-const json_value *json_path_get(const json_value *root, const char *path);
-json_status json_path_get_bool(const json_value *root, const char *path,
-                               int *out);
-json_status json_path_get_string(const json_value *root, const char *path,
-                                 const char **data, size_t *len);
-json_status json_path_get_long(const json_value *root, const char *path,
-                               long *out);
-json_status json_path_get_double(const json_value *root, const char *path,
-                                 double *out);
-
-#ifdef __cplusplus
-}
+#ifndef CSJP_API
+#if defined(__GNUC__) || defined(__clang__)
+#define CSJP_API static __attribute__((unused))
+#else
+#define CSJP_API static
+#endif
 #endif
 
-#endif
+CSJP_API json_status json_parse(const char *text, json_value *out,
+                                json_error *err);
+CSJP_API json_status json_parse_len(const char *text, size_t len,
+                                    const json_config *cfg, json_value *out,
+                                    json_error *err);
+CSJP_API void json_free(json_value *value);
+CSJP_API const char *json_error_to_string(json_status code);
 
-#ifdef JSON_IMPLEMENTATION
-#ifndef CSJP_JSON_IMPLEMENTATION
-#define CSJP_JSON_IMPLEMENTATION
+CSJP_API json_type json_type_get(const json_value *value);
+CSJP_API json_status json_bool_get(const json_value *value, int *out);
+CSJP_API json_status json_string_get(const json_value *value,
+                                     const char **data, size_t *len);
+CSJP_API json_status json_number_get(const json_value *value, const char **text,
+                                     size_t *len, double *as_double,
+                                     long *as_long, int *is_long);
+
+CSJP_API size_t json_array_size(const json_value *array);
+CSJP_API const json_value *json_array_get(const json_value *array,
+                                          size_t index);
+
+CSJP_API size_t json_object_size(const json_value *object);
+CSJP_API const char *json_object_key_at(const json_value *object, size_t index,
+                                        size_t *len);
+CSJP_API const json_value *json_object_value_at(const json_value *object,
+                                                size_t index);
+CSJP_API const json_value *json_object_get(const json_value *object,
+                                           const char *key);
+CSJP_API const json_value *json_object_get_len(const json_value *object,
+                                               const char *key, size_t len);
+
+CSJP_API const json_value *json_path_get(const json_value *root,
+                                         const char *path);
+CSJP_API json_status json_path_get_bool(const json_value *root,
+                                        const char *path, int *out);
+CSJP_API json_status json_path_get_string(const json_value *root,
+                                          const char *path, const char **data,
+                                          size_t *len);
+CSJP_API json_status json_path_get_long(const json_value *root,
+                                        const char *path, long *out);
+CSJP_API json_status json_path_get_double(const json_value *root,
+                                          const char *path, double *out);
 
 #include <ctype.h>
 #include <errno.h>
@@ -819,13 +820,13 @@ static json_status json__parse_number(json__parser *p, json_value *out) {
   out->as.number.len = (size_t)(it - start);
   out->as.number.as_double = dv;
   out->as.number.as_long = 0;
-  out->as.number.has_long = 0;
+  out->as.number.is_long = 0;
   if (is_integer) {
     errno = 0;
     lv = strtol(copy, &endptr, 10);
     if (errno != ERANGE && endptr != NULL && *endptr == '\0') {
       out->as.number.as_long = lv;
-      out->as.number.has_long = 1;
+      out->as.number.is_long = 1;
     }
   }
   p->cur = it;
@@ -1052,8 +1053,9 @@ static json_status json__parse_value(json__parser *p, json_value *out,
   }
 }
 
-json_status json_parse_len(const char *text, size_t len, const json_config *cfg,
-                           json_value *out, json_error *err) {
+CSJP_API json_status json_parse_len(const char *text, size_t len,
+                                    const json_config *cfg, json_value *out,
+                                    json_error *err) {
   json__parser p;
   json__arena *arena;
   json_status st;
@@ -1140,7 +1142,8 @@ json_status json_parse_len(const char *text, size_t len, const json_config *cfg,
   return JSON_OK;
 }
 
-json_status json_parse(const char *text, json_value *out, json_error *err) {
+CSJP_API json_status json_parse(const char *text, json_value *out,
+                                json_error *err) {
   if (text == NULL) {
     if (out != NULL) {
       json__value_null(out);
@@ -1154,7 +1157,7 @@ json_status json_parse(const char *text, json_value *out, json_error *err) {
   return json_parse_len(text, strlen(text), NULL, out, err);
 }
 
-void json_free(json_value *value) {
+CSJP_API void json_free(json_value *value) {
   json__arena *arena;
   if (value == NULL) {
     return;
@@ -1166,7 +1169,7 @@ void json_free(json_value *value) {
   }
 }
 
-const char *json_error_to_string(json_status code) {
+CSJP_API const char *json_error_to_string(json_status code) {
   switch (code) {
   case JSON_OK:
     return "OK";
@@ -1207,14 +1210,14 @@ const char *json_error_to_string(json_status code) {
   }
 }
 
-json_type json_get_type(const json_value *value) {
+CSJP_API json_type json_type_get(const json_value *value) {
   if (value == NULL) {
     return JSON_NULL;
   }
   return value->type;
 }
 
-json_status json_get_bool(const json_value *value, int *out) {
+CSJP_API json_status json_bool_get(const json_value *value, int *out) {
   if (value == NULL || value->type != JSON_BOOL || out == NULL) {
     return JSON_WRONG_TYPE;
   }
@@ -1222,8 +1225,8 @@ json_status json_get_bool(const json_value *value, int *out) {
   return JSON_OK;
 }
 
-json_status json_get_string(const json_value *value, const char **data,
-                            size_t *len) {
+CSJP_API json_status json_string_get(const json_value *value,
+                                     const char **data, size_t *len) {
   if (value == NULL || value->type != JSON_STRING) {
     return JSON_WRONG_TYPE;
   }
@@ -1236,9 +1239,9 @@ json_status json_get_string(const json_value *value, const char **data,
   return JSON_OK;
 }
 
-json_status json_get_number(const json_value *value, const char **text,
-                            size_t *len, double *as_double, long *as_long,
-                            int *has_long) {
+CSJP_API json_status json_number_get(const json_value *value, const char **text,
+                                     size_t *len, double *as_double,
+                                     long *as_long, int *is_long) {
   if (value == NULL || value->type != JSON_NUMBER) {
     return JSON_WRONG_TYPE;
   }
@@ -1254,20 +1257,21 @@ json_status json_get_number(const json_value *value, const char **text,
   if (as_long != NULL) {
     *as_long = value->as.number.as_long;
   }
-  if (has_long != NULL) {
-    *has_long = value->as.number.has_long;
+  if (is_long != NULL) {
+    *is_long = value->as.number.is_long;
   }
   return JSON_OK;
 }
 
-size_t json_array_size(const json_value *array) {
+CSJP_API size_t json_array_size(const json_value *array) {
   if (array == NULL || array->type != JSON_ARRAY) {
     return 0u;
   }
   return array->as.array.count;
 }
 
-const json_value *json_array_get(const json_value *array, size_t index) {
+CSJP_API const json_value *json_array_get(const json_value *array,
+                                          size_t index) {
   if (array == NULL || array->type != JSON_ARRAY) {
     return NULL;
   }
@@ -1277,15 +1281,15 @@ const json_value *json_array_get(const json_value *array, size_t index) {
   return &array->as.array.items[index];
 }
 
-size_t json_object_size(const json_value *object) {
+CSJP_API size_t json_object_size(const json_value *object) {
   if (object == NULL || object->type != JSON_OBJECT) {
     return 0u;
   }
   return object->as.object.count;
 }
 
-const char *json_object_key(const json_value *object, size_t index,
-                            size_t *len) {
+CSJP_API const char *json_object_key_at(const json_value *object, size_t index,
+                                        size_t *len) {
   if (object == NULL || object->type != JSON_OBJECT) {
     return NULL;
   }
@@ -1298,7 +1302,8 @@ const char *json_object_key(const json_value *object, size_t index,
   return object->as.object.members[index].key.data;
 }
 
-const json_value *json_object_value(const json_value *object, size_t index) {
+CSJP_API const json_value *json_object_value_at(const json_value *object,
+                                                size_t index) {
   if (object == NULL || object->type != JSON_OBJECT) {
     return NULL;
   }
@@ -1318,8 +1323,8 @@ static int json__same(const char *a, size_t alen, const char *b, size_t blen) {
   return memcmp(a, b, alen) == 0;
 }
 
-const json_value *json_object_find_len(const json_value *object,
-                                       const char *key, size_t len) {
+CSJP_API const json_value *json_object_get_len(const json_value *object,
+                                               const char *key, size_t len) {
   size_t i;
   json_member *member;
   const json_value *found;
@@ -1339,11 +1344,12 @@ const json_value *json_object_find_len(const json_value *object,
   return found;
 }
 
-const json_value *json_object_find(const json_value *object, const char *key) {
+CSJP_API const json_value *json_object_get(const json_value *object,
+                                           const char *key) {
   if (key == NULL) {
     return NULL;
   }
-  return json_object_find_len(object, key, strlen(key));
+  return json_object_get_len(object, key, strlen(key));
 }
 
 static int json__parse_size_index(const char *text, size_t len, size_t *out) {
@@ -1527,7 +1533,7 @@ static const json_value *json__path_get_status(const json_value *root,
       }
       return NULL;
     }
-    cur = json_object_find_len(cur, key, len);
+    cur = json_object_get_len(cur, key, len);
     allocator.free_fn(allocator.ctx, key, cap);
     if (cur == NULL) {
       if (status != NULL) {
@@ -1539,54 +1545,56 @@ static const json_value *json__path_get_status(const json_value *root,
   return cur;
 }
 
-const json_value *json_path_get(const json_value *root, const char *path) {
+CSJP_API const json_value *json_path_get(const json_value *root,
+                                         const char *path) {
   return json__path_get_status(root, path, NULL);
 }
 
-json_status json_path_get_bool(const json_value *root, const char *path,
-                               int *out) {
+CSJP_API json_status json_path_get_bool(const json_value *root,
+                                        const char *path, int *out) {
   const json_value *value;
   json_status st;
   value = json__path_get_status(root, path, &st);
   if (value == NULL) {
     return st;
   }
-  return json_get_bool(value, out);
+  return json_bool_get(value, out);
 }
 
-json_status json_path_get_string(const json_value *root, const char *path,
-                                 const char **data, size_t *len) {
+CSJP_API json_status json_path_get_string(const json_value *root,
+                                          const char *path, const char **data,
+                                          size_t *len) {
   const json_value *value;
   json_status st;
   value = json__path_get_status(root, path, &st);
   if (value == NULL) {
     return st;
   }
-  return json_get_string(value, data, len);
+  return json_string_get(value, data, len);
 }
 
-json_status json_path_get_long(const json_value *root, const char *path,
-                               long *out) {
+CSJP_API json_status json_path_get_long(const json_value *root,
+                                        const char *path, long *out) {
   const json_value *value;
-  int has_long;
+  int is_long;
   long as_long;
   json_status st;
   value = json__path_get_status(root, path, &st);
   if (value == NULL) {
     return st;
   }
-  if (json_get_number(value, NULL, NULL, NULL, &as_long, &has_long) != JSON_OK) {
+  if (json_number_get(value, NULL, NULL, NULL, &as_long, &is_long) != JSON_OK) {
     return JSON_WRONG_TYPE;
   }
-  if (!has_long || out == NULL) {
+  if (!is_long || out == NULL) {
     return JSON_WRONG_TYPE;
   }
   *out = as_long;
   return JSON_OK;
 }
 
-json_status json_path_get_double(const json_value *root, const char *path,
-                                 double *out) {
+CSJP_API json_status json_path_get_double(const json_value *root,
+                                          const char *path, double *out) {
   const json_value *value;
   double as_double;
   json_status st;
@@ -1594,7 +1602,7 @@ json_status json_path_get_double(const json_value *root, const char *path,
   if (value == NULL) {
     return st;
   }
-  if (json_get_number(value, NULL, NULL, &as_double, NULL, NULL) != JSON_OK) {
+  if (json_number_get(value, NULL, NULL, &as_double, NULL, NULL) != JSON_OK) {
     return JSON_WRONG_TYPE;
   }
   if (out == NULL) {
@@ -1604,5 +1612,4 @@ json_status json_path_get_double(const json_value *root, const char *path,
   return JSON_OK;
 }
 
-#endif
 #endif

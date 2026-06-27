@@ -2,5 +2,11 @@ bin
 obj
 Makefile
 
-build
-cmake
+build/
+CMakeCache.txt
+CMakeFiles/
+CTestTestfile.cmake
+Testing/
+cmake_install.cmake
+
+.omc
