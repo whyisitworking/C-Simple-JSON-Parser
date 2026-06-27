@@ -47,7 +47,7 @@ static char *read_file(const char *path) {
 
 int main(void) {
   char *text;
-  json_value root;
+  json_root root;
   json_error error;
   json_status status;
   const json_value *status_value;
@@ -69,20 +69,20 @@ int main(void) {
     return 1;
   }
 
-  status_value = json_object_get(&root, "status");
+  status_value = json_object_get(&root.value, "status");
   if (json_string_get(status_value, &str, &len) == JSON_OK) {
     printf("status: %.*s\n", (int)len, str);
   }
 
-  if (json_path_get_string(&root, "status", &str, &len) == JSON_OK) {
+  if (json_path_get_string(&root.value, "status", &str, &len) == JSON_OK) {
     printf("path status: %.*s\n", (int)len, str);
   }
 
-  if (json_path_get_long(&root, "data.a", &a) == JSON_OK) {
+  if (json_path_get_long(&root.value, "data.a", &a) == JSON_OK) {
     printf("data.a: %ld\n", a);
   }
 
-  if (json_path_get_bool(&root, "data.b", &b) == JSON_OK) {
+  if (json_path_get_bool(&root.value, "data.b", &b) == JSON_OK) {
     printf("data.b: %s\n", b ? "true" : "false");
   }
 

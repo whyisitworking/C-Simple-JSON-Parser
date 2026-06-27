@@ -81,7 +81,6 @@ typedef struct json_config {
 
 struct json_value {
   json_type type;
-  void *arena;
   union {
     int boolean;
     json_number number;
@@ -91,6 +90,11 @@ struct json_value {
   } as;
 };
 
+typedef struct json_root {
+  json_value value;
+  void *arena;
+} json_root;
+
 #ifndef CSJP_API
 #if defined(__GNUC__) || defined(__clang__)
 #define CSJP_API static __attribute__((unused))
@@ -99,13 +103,14 @@ struct json_value {
 #endif
 #endif
 
-CSJP_API json_status json_parse(const char *text, json_value *out,
+CSJP_API json_status json_parse(const char *text, json_root *out,
                                 json_error *err);
 CSJP_API json_status json_parse_len(const char *text, size_t len,
-                                    const json_config *cfg, json_value *out,
+                                    const json_config *cfg, json_root *out,
                                     json_error *err);
-CSJP_API void json_free(json_value *value);
+CSJP_API void json_free(json_root *root);
 CSJP_API const char *json_error_to_string(json_status code);
+CSJP_API const json_value *json_root_value(const json_root *root);
 
 CSJP_API json_type json_type_get(const json_value *value);
 CSJP_API json_status json_bool_get(const json_value *value, int *out);
@@ -114,6 +119,9 @@ CSJP_API json_status json_string_get(const json_value *value,
 CSJP_API json_status json_number_get(const json_value *value, const char **text,
                                      size_t *len, double *as_double,
                                      long *as_long, int *is_long);
+CSJP_API json_status json_number_get_double(const json_value *value,
+                                            double *out);
+CSJP_API json_status json_number_get_long(const json_value *value, long *out);
 
 CSJP_API size_t json_array_size(const json_value *array);
 CSJP_API const json_value *json_array_get(const json_value *array,
@@ -124,6 +132,10 @@ CSJP_API const char *json_object_key_at(const json_value *object, size_t index,
                                         size_t *len);
 CSJP_API const json_value *json_object_value_at(const json_value *object,
                                                 size_t index);
+CSJP_API const json_value *json_object_member_at(const json_value *object,
+                                                  size_t index,
+                                                  const char **key,
+                                                  size_t *key_len);
 CSJP_API const json_value *json_object_get(const json_value *object,
                                            const char *key);
 CSJP_API const json_value *json_object_get_len(const json_value *object,
@@ -141,7 +153,8 @@ CSJP_API json_status json_path_get_long(const json_value *root,
 CSJP_API json_status json_path_get_double(const json_value *root,
                                           const char *path, double *out);
 
-#include <ctype.h>
+/* ---- implementation (internal) ---- */
+
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -176,57 +189,7 @@ typedef struct json__parser {
   json_error error;
 } json__parser;
 
-static void *json__default_malloc(void *ctx, size_t size);
-static void *json__default_realloc(void *ctx, void *ptr, size_t old_size,
-                                   size_t new_size);
-static void json__default_free(void *ctx, void *ptr, size_t size);
-static json_allocator json__default_allocator(void);
-static void json__set_error(json__parser *p, json_status code,
-                            const char *where);
-static int json__is_ws(char c);
-static void json__skip_ws(json__parser *p);
-static json_status json__parse_value(json__parser *p, json_value *out,
-                                     size_t depth);
-static json_status json__parse_string_value(json__parser *p, json_value *out);
-static json_status json__parse_string_raw(json__parser *p, json_string *out);
-static json_status json__parse_number(json__parser *p, json_value *out);
-static json_status json__parse_array(json__parser *p, json_value *out,
-                                     size_t depth);
-static json_status json__parse_object(json__parser *p, json_value *out,
-                                      size_t depth);
-static json_status json__parse_literal(json__parser *p, const char *literal,
-                                       json_type type, int boolean,
-                                       json_value *out);
-static int json__match(json__parser *p, const char *literal);
-static void *json__arena_alloc(json__arena *arena, size_t size);
-static char *json__arena_copy(json__arena *arena, const char *data,
-                              size_t len);
-static json__arena *json__arena_new(json_allocator allocator);
-static void json__arena_destroy(json__arena *arena);
-static size_t json__align_size(size_t size);
-static int json__hex_value(char c);
-static json_status json__append_utf8(json__parser *p, char **buf,
-                                     size_t *len, size_t *cap,
-                                     unsigned long cp);
-static json_status json__append_byte(json__parser *p, char **buf,
-                                     size_t *len, size_t *cap, char ch);
-static int json__grow_buffer(json__parser *p, char **buf, size_t *cap,
-                             size_t needed);
-static json_status json__append_value(json__parser *p, json_value **items,
-                                      size_t *count, size_t *cap,
-                                      const json_value *value);
-static json_status json__append_member(json__parser *p, json_member **members,
-                                       size_t *count, size_t *cap,
-                                       const json_string *key,
-                                       const json_value *value);
-static void json__value_null(json_value *value);
-static int json__is_delim(const char *cur, const char *end);
-static int json__is_digit(char c);
-static int json__is_digit19(char c);
-static int json__same(const char *a, size_t alen, const char *b, size_t blen);
-static const json_value *json__path_get_status(const json_value *root,
-                                               const char *path,
-                                               json_status *status);
+/* ---- allocator ---- */
 
 static void *json__default_malloc(void *ctx, size_t size) {
   (void)ctx;
@@ -247,20 +210,15 @@ static void json__default_free(void *ctx, void *ptr, size_t size) {
 }
 
 static json_allocator json__default_allocator(void) {
-  json_allocator allocator;
-  allocator.ctx = NULL;
-  allocator.malloc_fn = json__default_malloc;
-  allocator.realloc_fn = json__default_realloc;
-  allocator.free_fn = json__default_free;
-  return allocator;
+  json_allocator a;
+  a.ctx = NULL;
+  a.malloc_fn = json__default_malloc;
+  a.realloc_fn = json__default_realloc;
+  a.free_fn = json__default_free;
+  return a;
 }
 
-static void json__value_null(json_value *value) {
-  if (value != NULL) {
-    memset(value, 0, sizeof(*value));
-    value->type = JSON_NULL;
-  }
-}
+/* ---- arena ---- */
 
 static size_t json__align_size(size_t size) {
   size_t align;
@@ -268,6 +226,9 @@ static size_t json__align_size(size_t size) {
   align = sizeof(void *);
   rem = size % align;
   if (rem != 0u) {
+    if (size > (size_t)(-1) - (align - rem)) {
+      return 0;
+    }
     size += align - rem;
   }
   return size;
@@ -312,15 +273,21 @@ static void *json__arena_alloc(json__arena *arena, size_t size) {
   size_t cap;
   size_t total;
   void *ptr;
-  if (arena == NULL || size == 0u) {
+  if (arena == NULL) {
     return NULL;
   }
   need = json__align_size(size);
+  if (need == 0u) {
+    return NULL;
+  }
   chunk = arena->chunks;
   if (chunk == NULL || chunk->cap - chunk->used < need) {
     cap = JSON_ARENA_CHUNK_SIZE;
     if (cap < need) {
       cap = need;
+    }
+    if (cap > (size_t)(-1) - sizeof(json__chunk)) {
+      return NULL;
     }
     total = sizeof(json__chunk) + cap;
     chunk = (json__chunk *)arena->allocator.malloc_fn(arena->allocator.ctx,
@@ -346,12 +313,19 @@ static char *json__arena_copy(json__arena *arena, const char *data,
   if (copy == NULL) {
     return NULL;
   }
-  if (len != 0u) {
-    memcpy(copy, data, len);
-  }
+  memcpy(copy, data, len);
   copy[len] = '\0';
   return copy;
 }
+
+/* ---- value init ---- */
+
+static void json__value_null(json_value *value) {
+  memset(value, 0, sizeof(*value));
+  value->type = JSON_NULL;
+}
+
+/* ---- parser utilities ---- */
 
 static void json__set_error(json__parser *p, json_status code,
                             const char *where) {
@@ -377,8 +351,6 @@ static void json__skip_ws(json__parser *p) {
 
 static int json__is_digit(char c) { return c >= '0' && c <= '9'; }
 
-static int json__is_digit19(char c) { return c >= '1' && c <= '9'; }
-
 static int json__is_delim(const char *cur, const char *end) {
   if (cur >= end) {
     return 1;
@@ -386,35 +358,11 @@ static int json__is_delim(const char *cur, const char *end) {
   return json__is_ws(*cur) || *cur == ',' || *cur == ']' || *cur == '}';
 }
 
-static int json__match(json__parser *p, const char *literal) {
-  size_t len;
-  len = strlen(literal);
+static int json__match(json__parser *p, const char *literal, size_t len) {
   if ((size_t)(p->end - p->cur) < len) {
     return 0;
   }
   return memcmp(p->cur, literal, len) == 0;
-}
-
-static json_status json__parse_literal(json__parser *p, const char *literal,
-                                       json_type type, int boolean,
-                                       json_value *out) {
-  size_t len;
-  if (!json__match(p, literal)) {
-    json__set_error(p, JSON_INVALID_LITERAL, p->cur);
-    return JSON_INVALID_LITERAL;
-  }
-  len = strlen(literal);
-  if (!json__is_delim(p->cur + len, p->end)) {
-    json__set_error(p, JSON_INVALID_LITERAL, p->cur + len);
-    return JSON_INVALID_LITERAL;
-  }
-  json__value_null(out);
-  out->type = type;
-  if (type == JSON_BOOL) {
-    out->as.boolean = boolean;
-  }
-  p->cur += len;
-  return JSON_OK;
 }
 
 static int json__hex_value(char c) {
@@ -429,6 +377,8 @@ static int json__hex_value(char c) {
   }
   return -1;
 }
+
+/* ---- buffer helpers ---- */
 
 static int json__grow_buffer(json__parser *p, char **buf, size_t *cap,
                              size_t needed) {
@@ -525,7 +475,6 @@ static json_status json__append_raw_utf8(json__parser *p, char **buf,
     *it += 1;
     return JSON_OK;
   }
-
   if (first >= 0xC2u && first <= 0xDFu) {
     need = 2u;
     cp = (unsigned long)(first & 0x1Fu);
@@ -539,7 +488,6 @@ static json_status json__append_raw_utf8(json__parser *p, char **buf,
     json__set_error(p, JSON_INVALID_UNICODE, *it);
     return JSON_INVALID_UNICODE;
   }
-
   if ((size_t)(p->end - *it) < need) {
     json__set_error(p, JSON_INVALID_UNICODE, *it);
     return JSON_INVALID_UNICODE;
@@ -591,6 +539,44 @@ static json_status json__read_u4(json__parser *p, const char **it,
   return JSON_OK;
 }
 
+/* ---- two-pass count ---- */
+
+/* Counts top-level comma-separated items; skips strings, depth-tracks brackets. */
+static size_t json__count_items(const char *cur, const char *end) {
+  size_t depth;
+  size_t count;
+  char ch;
+  char c2;
+  depth = 0u;
+  if (cur >= end || *cur == ']' || *cur == '}') {
+    return 0u;
+  }
+  count = 1u;
+  while (cur < end) {
+    ch = *cur++;
+    if (ch == '"') {
+      while (cur < end) {
+        c2 = *cur++;
+        if (c2 == '\\') {
+          if (cur < end) cur++;
+        } else if (c2 == '"') {
+          break;
+        }
+      }
+    } else if (ch == '[' || ch == '{') {
+      depth++;
+    } else if (ch == ']' || ch == '}') {
+      if (depth == 0u) break;
+      depth--;
+    } else if (ch == ',' && depth == 0u) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/* ---- string parser ---- */
+
 static json_status json__parse_string_raw(json__parser *p, json_string *out) {
   const char *it;
   char *buf;
@@ -599,7 +585,7 @@ static json_status json__parse_string_raw(json__parser *p, json_string *out) {
   size_t cap;
   unsigned long cp;
   unsigned long low;
-  json_status st;
+  json_status st = JSON_OK;
   char esc;
   if (p->cur >= p->end || *p->cur != '"') {
     json__set_error(p, JSON_INVALID_STRING, p->cur);
@@ -628,35 +614,25 @@ static json_status json__parse_string_raw(json__parser *p, json_string *out) {
           st = JSON_OK;
         }
       }
-      if (buf != NULL) {
-        p->cfg.allocator.free_fn(p->cfg.allocator.ctx, buf, cap);
-      }
-      return st;
+      goto cleanup;
     }
     if ((unsigned char)*it < 0x20u) {
       json__set_error(p, JSON_INVALID_STRING, it);
-      if (buf != NULL) {
-        p->cfg.allocator.free_fn(p->cfg.allocator.ctx, buf, cap);
-      }
-      return JSON_INVALID_STRING;
+      st = JSON_INVALID_STRING;
+      goto cleanup;
     }
     if (*it != '\\') {
       st = json__append_raw_utf8(p, &buf, &len, &cap, &it);
       if (st != JSON_OK) {
-        if (buf != NULL) {
-          p->cfg.allocator.free_fn(p->cfg.allocator.ctx, buf, cap);
-        }
-        return st;
+        goto cleanup;
       }
       continue;
     }
     it++;
     if (it >= p->end) {
       json__set_error(p, JSON_INVALID_ESCAPE, it);
-      if (buf != NULL) {
-        p->cfg.allocator.free_fn(p->cfg.allocator.ctx, buf, cap);
-      }
-      return JSON_INVALID_ESCAPE;
+      st = JSON_INVALID_ESCAPE;
+      goto cleanup;
     }
     esc = *it++;
     switch (esc) {
@@ -715,17 +691,16 @@ static json_status json__parse_string_raw(json__parser *p, json_string *out) {
       break;
     }
     if (st != JSON_OK) {
-      if (buf != NULL) {
-        p->cfg.allocator.free_fn(p->cfg.allocator.ctx, buf, cap);
-      }
-      return st;
+      goto cleanup;
     }
   }
   json__set_error(p, JSON_INVALID_STRING, p->end);
+  st = JSON_INVALID_STRING;
+cleanup:
   if (buf != NULL) {
     p->cfg.allocator.free_fn(p->cfg.allocator.ctx, buf, cap);
   }
-  return JSON_INVALID_STRING;
+  return st;
 }
 
 static json_status json__parse_string_value(json__parser *p, json_value *out) {
@@ -743,6 +718,8 @@ static json_status json__parse_string_value(json__parser *p, json_value *out) {
   return JSON_OK;
 }
 
+/* ---- number parser ---- */
+
 static json_status json__parse_number(json__parser *p, json_value *out) {
   const char *start;
   const char *it;
@@ -751,7 +728,6 @@ static json_status json__parse_number(json__parser *p, json_value *out) {
   long lv;
   double dv;
   int is_integer;
-  errno = 0;
   start = p->cur;
   it = p->cur;
   is_integer = 1;
@@ -768,7 +744,7 @@ static json_status json__parse_number(json__parser *p, json_value *out) {
       json__set_error(p, JSON_INVALID_NUMBER, it);
       return JSON_INVALID_NUMBER;
     }
-  } else if (json__is_digit19(*it)) {
+  } else if (*it >= '1' && *it <= '9') {
     while (it < p->end && json__is_digit(*it)) {
       it++;
     }
@@ -811,20 +787,16 @@ static json_status json__parse_number(json__parser *p, json_value *out) {
     return JSON_ALLOCATION_FAILED;
   }
   errno = 0;
-  dv = strtod(copy, &endptr);
-  (void)endptr;
-  lv = 0;
+  dv = strtod(copy, NULL);
   json__value_null(out);
   out->type = JSON_NUMBER;
   out->as.number.text = copy;
   out->as.number.len = (size_t)(it - start);
   out->as.number.as_double = dv;
-  out->as.number.as_long = 0;
-  out->as.number.is_long = 0;
   if (is_integer) {
     errno = 0;
     lv = strtol(copy, &endptr, 10);
-    if (errno != ERANGE && endptr != NULL && *endptr == '\0') {
+    if (errno != ERANGE && *endptr == '\0') {
       out->as.number.as_long = lv;
       out->as.number.is_long = 1;
     }
@@ -833,76 +805,47 @@ static json_status json__parse_number(json__parser *p, json_value *out) {
   return JSON_OK;
 }
 
-static json_status json__append_value(json__parser *p, json_value **items,
-                                      size_t *count, size_t *cap,
-                                      const json_value *value) {
-  json_value *next;
-  size_t new_cap;
-  if (*count == *cap) {
-    new_cap = *cap == 0u ? 4u : *cap * 2u;
-    next = (json_value *)json__arena_alloc(p->arena,
-                                           new_cap * sizeof(json_value));
-    if (next == NULL) {
-      json__set_error(p, JSON_ALLOCATION_FAILED, p->cur);
-      return JSON_ALLOCATION_FAILED;
-    }
-    if (*count != 0u) {
-      memcpy(next, *items, *count * sizeof(json_value));
-    }
-    *items = next;
-    *cap = new_cap;
+/* ---- literal parser ---- */
+
+static json_status json__parse_literal(json__parser *p, const char *literal,
+                                       size_t len, json_type type, int boolean,
+                                       json_value *out) {
+  if (!json__match(p, literal, len)) {
+    json__set_error(p, JSON_INVALID_LITERAL, p->cur);
+    return JSON_INVALID_LITERAL;
   }
-  (*items)[*count] = *value;
-  *count += 1u;
+  if (!json__is_delim(p->cur + len, p->end)) {
+    json__set_error(p, JSON_INVALID_LITERAL, p->cur + len);
+    return JSON_INVALID_LITERAL;
+  }
+  json__value_null(out);
+  out->type = type;
+  if (type == JSON_BOOL) {
+    out->as.boolean = boolean;
+  }
+  p->cur += len;
   return JSON_OK;
 }
 
-static json_status json__append_member(json__parser *p, json_member **members,
-                                       size_t *count, size_t *cap,
-                                       const json_string *key,
-                                       const json_value *value) {
-  json_member *next;
-  json_value *stored;
-  size_t new_cap;
-  if (*count == *cap) {
-    new_cap = *cap == 0u ? 4u : *cap * 2u;
-    next = (json_member *)json__arena_alloc(p->arena,
-                                            new_cap * sizeof(json_member));
-    if (next == NULL) {
-      json__set_error(p, JSON_ALLOCATION_FAILED, p->cur);
-      return JSON_ALLOCATION_FAILED;
-    }
-    if (*count != 0u) {
-      memcpy(next, *members, *count * sizeof(json_member));
-    }
-    *members = next;
-    *cap = new_cap;
-  }
-  stored = (json_value *)json__arena_alloc(p->arena, sizeof(json_value));
-  if (stored == NULL) {
-    json__set_error(p, JSON_ALLOCATION_FAILED, p->cur);
-    return JSON_ALLOCATION_FAILED;
-  }
-  *stored = *value;
-  (*members)[*count].key = *key;
-  (*members)[*count].value = stored;
-  *count += 1u;
-  return JSON_OK;
-}
+/* ---- array and object parsers (call json__parse_value forward) ---- */
+
+static json_status json__parse_value(json__parser *p, json_value *out,
+                                     size_t depth);
 
 static json_status json__parse_array(json__parser *p, json_value *out,
                                      size_t depth) {
   json_value *items;
-  json_value item;
   size_t count;
-  size_t cap;
+  size_t i;
   json_status st;
-  p->cur++;
+  p->cur++; /* skip '[' */
   json__skip_ws(p);
-  items = NULL;
-  count = 0u;
-  cap = 0u;
-  if (p->cur < p->end && *p->cur == ']') {
+  count = json__count_items(p->cur, p->end);
+  if (count == 0u) {
+    if (p->cur >= p->end || *p->cur != ']') {
+      json__set_error(p, JSON_EXPECTED_COMMA_OR_END, p->cur);
+      return JSON_EXPECTED_COMMA_OR_END;
+    }
     p->cur++;
     json__value_null(out);
     out->type = JSON_ARRAY;
@@ -910,57 +853,55 @@ static json_status json__parse_array(json__parser *p, json_value *out,
     out->as.array.items = NULL;
     return JSON_OK;
   }
-  while (p->cur < p->end) {
-    st = json__parse_value(p, &item, depth + 1u);
-    if (st != JSON_OK) {
-      return st;
-    }
-    st = json__append_value(p, &items, &count, &cap, &item);
+  items = (json_value *)json__arena_alloc(p->arena, count * sizeof(json_value));
+  if (items == NULL) {
+    json__set_error(p, JSON_ALLOCATION_FAILED, p->cur);
+    return JSON_ALLOCATION_FAILED;
+  }
+  for (i = 0u; i < count; i++) {
+    st = json__parse_value(p, &items[i], depth + 1u);
     if (st != JSON_OK) {
       return st;
     }
     json__skip_ws(p);
-    if (p->cur >= p->end) {
-      json__set_error(p, JSON_EXPECTED_COMMA_OR_END, p->cur);
-      return JSON_EXPECTED_COMMA_OR_END;
-    }
-    if (*p->cur == ']') {
+    if (i + 1u < count) {
+      if (p->cur >= p->end || *p->cur != ',') {
+        json__set_error(p, JSON_EXPECTED_COMMA_OR_END, p->cur);
+        return JSON_EXPECTED_COMMA_OR_END;
+      }
       p->cur++;
-      json__value_null(out);
-      out->type = JSON_ARRAY;
-      out->as.array.count = count;
-      out->as.array.items = items;
-      return JSON_OK;
-    }
-    if (*p->cur != ',') {
-      json__set_error(p, JSON_EXPECTED_COMMA_OR_END, p->cur);
-      return JSON_EXPECTED_COMMA_OR_END;
-    }
-    p->cur++;
-    json__skip_ws(p);
-    if (p->cur < p->end && *p->cur == ']') {
-      json__set_error(p, JSON_EXPECTED_VALUE, p->cur);
-      return JSON_EXPECTED_VALUE;
+      json__skip_ws(p);
     }
   }
-  json__set_error(p, JSON_EXPECTED_COMMA_OR_END, p->end);
-  return JSON_EXPECTED_COMMA_OR_END;
+  json__skip_ws(p);
+  if (p->cur >= p->end || *p->cur != ']') {
+    json__set_error(p, JSON_EXPECTED_COMMA_OR_END, p->cur);
+    return JSON_EXPECTED_COMMA_OR_END;
+  }
+  p->cur++;
+  json__value_null(out);
+  out->type = JSON_ARRAY;
+  out->as.array.count = count;
+  out->as.array.items = items;
+  return JSON_OK;
 }
 
 static json_status json__parse_object(json__parser *p, json_value *out,
                                       size_t depth) {
   json_member *members;
+  json_value *values;
   json_string key;
-  json_value value;
   size_t count;
-  size_t cap;
+  size_t i;
   json_status st;
-  p->cur++;
+  p->cur++; /* skip '{' */
   json__skip_ws(p);
-  members = NULL;
-  count = 0u;
-  cap = 0u;
-  if (p->cur < p->end && *p->cur == '}') {
+  count = json__count_items(p->cur, p->end);
+  if (count == 0u) {
+    if (p->cur >= p->end || *p->cur != '}') {
+      json__set_error(p, JSON_EXPECTED_COMMA_OR_END, p->cur);
+      return JSON_EXPECTED_COMMA_OR_END;
+    }
     p->cur++;
     json__value_null(out);
     out->type = JSON_OBJECT;
@@ -968,8 +909,20 @@ static json_status json__parse_object(json__parser *p, json_value *out,
     out->as.object.members = NULL;
     return JSON_OK;
   }
-  while (p->cur < p->end) {
-    if (*p->cur != '"') {
+  members = (json_member *)json__arena_alloc(p->arena,
+                                             count * sizeof(json_member));
+  if (members == NULL) {
+    json__set_error(p, JSON_ALLOCATION_FAILED, p->cur);
+    return JSON_ALLOCATION_FAILED;
+  }
+  values = (json_value *)json__arena_alloc(p->arena,
+                                           count * sizeof(json_value));
+  if (values == NULL) {
+    json__set_error(p, JSON_ALLOCATION_FAILED, p->cur);
+    return JSON_ALLOCATION_FAILED;
+  }
+  for (i = 0u; i < count; i++) {
+    if (p->cur >= p->end || *p->cur != '"') {
       json__set_error(p, JSON_EXPECTED_KEY, p->cur);
       return JSON_EXPECTED_KEY;
     }
@@ -984,40 +937,33 @@ static json_status json__parse_object(json__parser *p, json_value *out,
     }
     p->cur++;
     json__skip_ws(p);
-    st = json__parse_value(p, &value, depth + 1u);
+    st = json__parse_value(p, &values[i], depth + 1u);
     if (st != JSON_OK) {
       return st;
     }
-    st = json__append_member(p, &members, &count, &cap, &key, &value);
-    if (st != JSON_OK) {
-      return st;
-    }
+    members[i].key = key;
+    members[i].value = &values[i];
     json__skip_ws(p);
-    if (p->cur >= p->end) {
-      json__set_error(p, JSON_EXPECTED_COMMA_OR_END, p->cur);
-      return JSON_EXPECTED_COMMA_OR_END;
-    }
-    if (*p->cur == '}') {
+    if (i + 1u < count) {
+      if (p->cur >= p->end || *p->cur != ',') {
+        json__set_error(p, JSON_EXPECTED_COMMA_OR_END, p->cur);
+        return JSON_EXPECTED_COMMA_OR_END;
+      }
       p->cur++;
-      json__value_null(out);
-      out->type = JSON_OBJECT;
-      out->as.object.count = count;
-      out->as.object.members = members;
-      return JSON_OK;
-    }
-    if (*p->cur != ',') {
-      json__set_error(p, JSON_EXPECTED_COMMA_OR_END, p->cur);
-      return JSON_EXPECTED_COMMA_OR_END;
-    }
-    p->cur++;
-    json__skip_ws(p);
-    if (p->cur < p->end && *p->cur == '}') {
-      json__set_error(p, JSON_EXPECTED_KEY, p->cur);
-      return JSON_EXPECTED_KEY;
+      json__skip_ws(p);
     }
   }
-  json__set_error(p, JSON_EXPECTED_COMMA_OR_END, p->end);
-  return JSON_EXPECTED_COMMA_OR_END;
+  json__skip_ws(p);
+  if (p->cur >= p->end || *p->cur != '}') {
+    json__set_error(p, JSON_EXPECTED_COMMA_OR_END, p->cur);
+    return JSON_EXPECTED_COMMA_OR_END;
+  }
+  p->cur++;
+  json__value_null(out);
+  out->type = JSON_OBJECT;
+  out->as.object.count = count;
+  out->as.object.members = members;
+  return JSON_OK;
 }
 
 static json_status json__parse_value(json__parser *p, json_value *out,
@@ -1033,11 +979,11 @@ static json_status json__parse_value(json__parser *p, json_value *out,
   }
   switch (*p->cur) {
   case 'n':
-    return json__parse_literal(p, "null", JSON_NULL, 0, out);
+    return json__parse_literal(p, "null", 4u, JSON_NULL, 0, out);
   case 't':
-    return json__parse_literal(p, "true", JSON_BOOL, 1, out);
+    return json__parse_literal(p, "true", 4u, JSON_BOOL, 1, out);
   case 'f':
-    return json__parse_literal(p, "false", JSON_BOOL, 0, out);
+    return json__parse_literal(p, "false", 5u, JSON_BOOL, 0, out);
   case '"':
     return json__parse_string_value(p, out);
   case '[':
@@ -1053,8 +999,10 @@ static json_status json__parse_value(json__parser *p, json_value *out,
   }
 }
 
+/* ---- top-level parse / free ---- */
+
 CSJP_API json_status json_parse_len(const char *text, size_t len,
-                                    const json_config *cfg, json_value *out,
+                                    const json_config *cfg, json_root *out,
                                     json_error *err) {
   json__parser p;
   json__arena *arena;
@@ -1062,7 +1010,7 @@ CSJP_API json_status json_parse_len(const char *text, size_t len,
   json_value root;
   json_config local_cfg;
   if (out != NULL) {
-    json__value_null(out);
+    memset(out, 0, sizeof(*out));
   }
   if (err != NULL) {
     err->code = JSON_OK;
@@ -1074,13 +1022,6 @@ CSJP_API json_status json_parse_len(const char *text, size_t len,
       err->offset = 0u;
     }
     return JSON_EMPTY_INPUT;
-  }
-  if (out == NULL) {
-    if (err != NULL) {
-      err->code = JSON_ALLOCATION_FAILED;
-      err->offset = 0u;
-    }
-    return JSON_ALLOCATION_FAILED;
   }
   local_cfg.max_depth = JSON_DEFAULT_MAX_DEPTH;
   local_cfg.allocator = json__default_allocator();
@@ -1130,44 +1071,35 @@ CSJP_API json_status json_parse_len(const char *text, size_t len,
       *err = p.error;
     }
     json__arena_destroy(arena);
-    json__value_null(out);
     return st;
   }
-  root.arena = arena;
-  *out = root;
-  if (err != NULL) {
-    err->code = JSON_OK;
-    err->offset = 0u;
+  if (out != NULL) {
+    out->value = root;
+    out->arena = arena;
+  } else {
+    json__arena_destroy(arena);
   }
   return JSON_OK;
 }
 
-CSJP_API json_status json_parse(const char *text, json_value *out,
+CSJP_API json_status json_parse(const char *text, json_root *out,
                                 json_error *err) {
-  if (text == NULL) {
-    if (out != NULL) {
-      json__value_null(out);
-    }
-    if (err != NULL) {
-      err->code = JSON_EMPTY_INPUT;
-      err->offset = 0u;
-    }
-    return JSON_EMPTY_INPUT;
-  }
-  return json_parse_len(text, strlen(text), NULL, out, err);
+  return json_parse_len(text, text != NULL ? strlen(text) : 0u, NULL, out, err);
 }
 
-CSJP_API void json_free(json_value *value) {
+CSJP_API void json_free(json_root *root) {
   json__arena *arena;
-  if (value == NULL) {
+  if (root == NULL) {
     return;
   }
-  arena = (json__arena *)value->arena;
-  json__value_null(value);
+  arena = (json__arena *)root->arena;
+  memset(root, 0, sizeof(*root));
   if (arena != NULL) {
     json__arena_destroy(arena);
   }
 }
+
+/* ---- error string ---- */
 
 CSJP_API const char *json_error_to_string(json_status code) {
   switch (code) {
@@ -1208,6 +1140,15 @@ CSJP_API const char *json_error_to_string(json_status code) {
   default:
     return "Unknown error";
   }
+}
+
+/* ---- accessors ---- */
+
+CSJP_API const json_value *json_root_value(const json_root *root) {
+  if (root == NULL) {
+    return NULL;
+  }
+  return &root->value;
 }
 
 CSJP_API json_type json_type_get(const json_value *value) {
@@ -1263,6 +1204,26 @@ CSJP_API json_status json_number_get(const json_value *value, const char **text,
   return JSON_OK;
 }
 
+CSJP_API json_status json_number_get_double(const json_value *value,
+                                            double *out) {
+  if (value == NULL || value->type != JSON_NUMBER || out == NULL) {
+    return JSON_WRONG_TYPE;
+  }
+  *out = value->as.number.as_double;
+  return JSON_OK;
+}
+
+CSJP_API json_status json_number_get_long(const json_value *value, long *out) {
+  if (value == NULL || value->type != JSON_NUMBER || out == NULL) {
+    return JSON_WRONG_TYPE;
+  }
+  if (!value->as.number.is_long) {
+    return JSON_WRONG_TYPE;
+  }
+  *out = value->as.number.as_long;
+  return JSON_OK;
+}
+
 CSJP_API size_t json_array_size(const json_value *array) {
   if (array == NULL || array->type != JSON_ARRAY) {
     return 0u;
@@ -1313,12 +1274,28 @@ CSJP_API const json_value *json_object_value_at(const json_value *object,
   return object->as.object.members[index].value;
 }
 
+CSJP_API const json_value *json_object_member_at(const json_value *object,
+                                                  size_t index,
+                                                  const char **key,
+                                                  size_t *key_len) {
+  if (object == NULL || object->type != JSON_OBJECT) {
+    return NULL;
+  }
+  if (index >= object->as.object.count) {
+    return NULL;
+  }
+  if (key != NULL) {
+    *key = object->as.object.members[index].key.data;
+  }
+  if (key_len != NULL) {
+    *key_len = object->as.object.members[index].key.len;
+  }
+  return object->as.object.members[index].value;
+}
+
 static int json__same(const char *a, size_t alen, const char *b, size_t blen) {
   if (alen != blen) {
     return 0;
-  }
-  if (alen == 0u) {
-    return 1;
   }
   return memcmp(a, b, alen) == 0;
 }
@@ -1327,30 +1304,26 @@ CSJP_API const json_value *json_object_get_len(const json_value *object,
                                                const char *key, size_t len) {
   size_t i;
   json_member *member;
-  const json_value *found;
   if (object == NULL || object->type != JSON_OBJECT || key == NULL) {
     return NULL;
   }
-  found = NULL;
   i = object->as.object.count;
   while (i > 0u) {
     i--;
     member = &object->as.object.members[i];
     if (json__same(member->key.data, member->key.len, key, len)) {
-      found = member->value;
-      break;
+      return member->value;
     }
   }
-  return found;
+  return NULL;
 }
 
 CSJP_API const json_value *json_object_get(const json_value *object,
                                            const char *key) {
-  if (key == NULL) {
-    return NULL;
-  }
-  return json_object_get_len(object, key, strlen(key));
+  return json_object_get_len(object, key, key != NULL ? strlen(key) : 0u);
 }
+
+/* ---- path helpers ---- */
 
 static int json__parse_size_index(const char *text, size_t len, size_t *out) {
   size_t index;
@@ -1381,33 +1354,28 @@ static const json_value *json__path_get_status(const json_value *root,
                                                json_status *status) {
   const json_value *cur;
   const char *p;
-  char *key;
-  size_t len;
-  size_t cap;
   size_t index;
   const char *digits;
-  json_allocator allocator;
-  json__arena *arena;
-  int any;
+  char stack_key[256];
+  char *key;
+  char *key_next;
+  size_t len;
+  size_t cap;
+  size_t next_cap;
+
   if (status != NULL) {
     *status = JSON_OK;
   }
-  cur = root;
-  p = path;
   if (root == NULL || path == NULL) {
     if (status != NULL) {
       *status = JSON_NOT_FOUND;
     }
     return NULL;
   }
+  cur = root;
+  p = path;
   if (*p == '\0') {
     return root;
-  }
-  if (root->arena != NULL) {
-    arena = (json__arena *)root->arena;
-    allocator = arena->allocator;
-  } else {
-    allocator = json__default_allocator();
   }
   while (*p != '\0') {
     if (*p == '.') {
@@ -1459,48 +1427,60 @@ static const json_value *json__path_get_status(const json_value *root,
       }
       continue;
     }
-    cap = 32u;
+    /* key segment: stack buffer for keys <= 255 chars, heap beyond that.
+       the custom allocator is not reachable from json_value*, so the heap
+       fallback uses the system allocator directly. */
+    key = stack_key;
+    cap = sizeof(stack_key);
     len = 0u;
-    any = 0;
-    key = (char *)allocator.malloc_fn(allocator.ctx, cap);
-    if (key == NULL) {
-      if (status != NULL) {
-        *status = JSON_ALLOCATION_FAILED;
-      }
-      return NULL;
-    }
     while (*p != '\0' && *p != '.' && *p != '[') {
       if (*p == '\\' && p[1] != '\0') {
         p++;
       }
+      if (len == (size_t)(-1)) {
+        if (key != stack_key) {
+          free(key);
+        }
+        if (status != NULL) {
+          *status = JSON_INVALID_PATH;
+        }
+        return NULL;
+      }
       if (len + 1u >= cap) {
-        char *next;
-        size_t next_cap;
-        if (cap > ((size_t)-1) / 2u) {
-          allocator.free_fn(allocator.ctx, key, cap);
-          if (status != NULL) {
-            *status = JSON_ALLOCATION_FAILED;
-          }
-          return NULL;
-        }
         next_cap = cap * 2u;
-        next = (char *)allocator.realloc_fn(allocator.ctx, key, cap, next_cap);
-        if (next == NULL) {
-          allocator.free_fn(allocator.ctx, key, cap);
+        if (next_cap < cap) {
+          if (key != stack_key) {
+            free(key);
+          }
           if (status != NULL) {
             *status = JSON_ALLOCATION_FAILED;
           }
           return NULL;
         }
-        key = next;
+        key_next = (char *)malloc(next_cap);
+        if (key_next == NULL) {
+          if (key != stack_key) {
+            free(key);
+          }
+          if (status != NULL) {
+            *status = JSON_ALLOCATION_FAILED;
+          }
+          return NULL;
+        }
+        memcpy(key_next, key, len);
+        if (key != stack_key) {
+          free(key);
+        }
+        key = key_next;
         cap = next_cap;
       }
       key[len++] = *p++;
-      any = 1;
     }
     key[len] = '\0';
-    if (!any) {
-      allocator.free_fn(allocator.ctx, key, cap);
+    if (len == 0u) {
+      if (key != stack_key) {
+        free(key);
+      }
       if (status != NULL) {
         *status = JSON_INVALID_PATH;
       }
@@ -1508,7 +1488,9 @@ static const json_value *json__path_get_status(const json_value *root,
     }
     if (cur != NULL && cur->type == JSON_ARRAY) {
       if (json__parse_size_index(key, len, &index)) {
-        allocator.free_fn(allocator.ctx, key, cap);
+        if (key != stack_key) {
+          free(key);
+        }
         cur = json_array_get(cur, index);
         if (cur == NULL) {
           if (status != NULL) {
@@ -1519,7 +1501,9 @@ static const json_value *json__path_get_status(const json_value *root,
         continue;
       }
       if (json__is_digit(key[0])) {
-        allocator.free_fn(allocator.ctx, key, cap);
+        if (key != stack_key) {
+          free(key);
+        }
         if (status != NULL) {
           *status = JSON_INVALID_PATH;
         }
@@ -1527,14 +1511,18 @@ static const json_value *json__path_get_status(const json_value *root,
       }
     }
     if (cur == NULL || cur->type != JSON_OBJECT) {
-      allocator.free_fn(allocator.ctx, key, cap);
+      if (key != stack_key) {
+        free(key);
+      }
       if (status != NULL) {
         *status = JSON_WRONG_TYPE;
       }
       return NULL;
     }
     cur = json_object_get_len(cur, key, len);
-    allocator.free_fn(allocator.ctx, key, cap);
+    if (key != stack_key) {
+      free(key);
+    }
     if (cur == NULL) {
       if (status != NULL) {
         *status = JSON_NOT_FOUND;
@@ -1576,40 +1564,23 @@ CSJP_API json_status json_path_get_string(const json_value *root,
 CSJP_API json_status json_path_get_long(const json_value *root,
                                         const char *path, long *out) {
   const json_value *value;
-  int is_long;
-  long as_long;
   json_status st;
   value = json__path_get_status(root, path, &st);
   if (value == NULL) {
     return st;
   }
-  if (json_number_get(value, NULL, NULL, NULL, &as_long, &is_long) != JSON_OK) {
-    return JSON_WRONG_TYPE;
-  }
-  if (!is_long || out == NULL) {
-    return JSON_WRONG_TYPE;
-  }
-  *out = as_long;
-  return JSON_OK;
+  return json_number_get_long(value, out);
 }
 
 CSJP_API json_status json_path_get_double(const json_value *root,
                                           const char *path, double *out) {
   const json_value *value;
-  double as_double;
   json_status st;
   value = json__path_get_status(root, path, &st);
   if (value == NULL) {
     return st;
   }
-  if (json_number_get(value, NULL, NULL, &as_double, NULL, NULL) != JSON_OK) {
-    return JSON_WRONG_TYPE;
-  }
-  if (out == NULL) {
-    return JSON_WRONG_TYPE;
-  }
-  *out = as_double;
-  return JSON_OK;
+  return json_number_get_double(value, out);
 }
 
 #endif

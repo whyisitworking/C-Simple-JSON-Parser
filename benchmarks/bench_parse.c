@@ -55,12 +55,12 @@ static int bench_file(const char *path, int iterations) {
   double mb;
   json_status st;
   json_error err;
-  json_value root;
+  json_root root;
 
   text = read_file(path, &len);
   if (text == NULL) {
     printf("%s: skipped\n", path);
-    return 0;
+    return 1;
   }
 
   start = clock();
@@ -88,13 +88,18 @@ static int bench_file(const char *path, int iterations) {
 int main(int argc, char **argv) {
   int iterations;
   int failed;
+  char *end;
+  long val;
 
   iterations = 1000;
   if (argc > 1) {
-    iterations = atoi(argv[1]);
-    if (iterations <= 0) {
-      iterations = 1;
+    end = NULL;
+    val = strtol(argv[1], &end, 10);
+    if (end == argv[1] || val <= 0 || val > 100000L) {
+      fprintf(stderr, "Usage: %s <iterations>\n", argv[0]);
+      return 1;
     }
+    iterations = (int)val;
   }
 
   failed = 0;
